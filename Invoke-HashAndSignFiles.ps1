@@ -10,6 +10,9 @@ files, and then signs the hash files with GPG.
 .PARAMETER Exclude
 Specifies a string array of subdirectory names to exclude from processing.
 
+.PARAMETER Include
+Specifies a string array of subdirectory names to include in processing.
+
 .PARAMETER NoSign
 Do not sign the hash files.
 
@@ -37,13 +40,24 @@ https://gnupg.org/
 https://gpg4win.org/
 #>
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'StandardOptions')]
 Param(
+	[Parameter(Mandatory = $true, ParameterSetName = 'ExcludeDirs')]
 	[ValidateNotNullOrEmpty()]
 	[string[]]$Exclude,
 
+	[Parameter(Mandatory = $true, ParameterSetName = 'IncludeDirs')]
+	[ValidateNotNullOrEmpty()]
+	[string[]]$Include,
+
+	[Parameter(ParameterSetName = 'StandardOptions')]
+	[Parameter(ParameterSetName = 'ExcludeDirs')]
+	[Parameter(ParameterSetName = 'IncludeDirs')]
 	[switch]$NoSign,
 
+	[Parameter(ParameterSetName = 'StandardOptions')]
+	[Parameter(ParameterSetName = 'ExcludeDirs')]
+	[Parameter(ParameterSetName = 'IncludeDirs')]
 	[switch]$NoStats
 )
 
@@ -56,8 +70,9 @@ $hashfiles = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 ForEach($dir in $dirs)
 {
-	if ($dir.Name -in $Exclude) {
-		Write-Host
+	if ((($dir.Name -in $Exclude) -and ($PSCmdlet.ParameterSetName -eq 'ExcludeDirs')) -or
+		(($dir.Name -notin $Include) -and ($PSCmdlet.ParameterSetName -eq 'IncludeDirs')))
+	{
 		Write-Host -NoNewline 'Skipping '
 		Write-Host -ForegroundColor Magenta ($dir.BaseName.ToString())
 		++$skipcount
@@ -65,7 +80,6 @@ ForEach($dir in $dirs)
 	}
 	
 	if ( (Get-ChildItem -Path $dir.FullName).Count -eq 0) {
-		Write-Host
 		Write-Host -NoNewline 'Skipping '
 		Write-Host -NoNewline -ForegroundColor Magenta ($dir.BaseName.ToString())
 		Write-Host ' because it''s empty!'
@@ -86,6 +100,7 @@ ForEach($dir in $dirs)
     Write-Host -Separator $null -ForegroundColor Green (@('-') * ($path.ToString().Length + $hashfile.Length + 2))
  
     & rhash --sha256 -rPo $hashfile *
+	Write-Host
 	[PSCustomObject]$fileobj = @{
 		'Path' = $path.ToString() + '\'
 		'File' = $hashfile
