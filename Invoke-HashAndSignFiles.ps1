@@ -14,11 +14,11 @@ function Invoke-HashAndSignFiles {
 	.PARAMETER IncludeDirs
 	Specifies a string array of subdirectory names to include in processing.
 
+#	.PARAMETER Algorithm
+#	Specify a list of one or more algorithms to calculate hashes.
+
 	.PARAMETER NoSign
 	Do not sign the hash files.
-
-	.PARAMETER NoStats
-	Do not collect or display file statistics.
 
 	.INPUTS
 	This script does not take pipelined inputs.
@@ -43,29 +43,36 @@ function Invoke-HashAndSignFiles {
 
 	[CmdletBinding(DefaultParameterSetName = 'StandardOptions')]
 	Param(
-		[Parameter(Mandatory = $true, ParameterSetName = 'ExcludeDirs')]
+		[Parameter(ParameterSetName = 'ExcludeDirs', Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[IO.DirectoryInfo[]]
+		[string[]]
 		$ExcludeDirs,
 
-		[Parameter(Mandatory = $true, ParameterSetName = 'IncludeDirs')]
+		[Parameter(ParameterSetName = 'IncludeDirs', Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[IO.DirectoryInfo[]]
+		[string[]]
 		$IncludeDirs,
 
-		[Parameter(ParameterSetName = 'StandardOptions')]
-		[Parameter(ParameterSetName = 'ExcludeDirs')]
-		[Parameter(ParameterSetName = 'IncludeDirs')]
-		[switch]
-		$NoSign,
+#		[Parameter(ParameterSetName = 'StandardOptions')]
+#		[Parameter(ParameterSetName = 'ExcludeDirs')]
+#		[Parameter(ParameterSetName = 'IncludeDirs')]
+#		[ValidateSet('AICH', 'BLAKE2b', 'BLAKE2s', 'BTIH', 'CRC32', 'CRC32C',
+#			'ED2K', 'EDON-R256', 'EDON-R512', 'GOST12-256', 'GOST12-512', 'GOST94',
+#			'GOST94-CRYPTOPRO', 'HAS-160', 'MD4', 'MD5', 'RMD160', 'SHA1',
+#			'SHA224', 'SHA256', 'SHA3-224', 'SHA3-256', 'SHA3-384', 'SHA3-512',
+#			'SHA384', 'SHA512', 'SNEFRU-128', 'SNEFRU-256', 'TIGER', 'TTH',
+#			'WHIRLPOOL')]
+#		[string[]]
+#		$Algorithm,
 
 		[Parameter(ParameterSetName = 'StandardOptions')]
 		[Parameter(ParameterSetName = 'ExcludeDirs')]
 		[Parameter(ParameterSetName = 'IncludeDirs')]
 		[switch]
-		$NoStats
+		$NoSign
 	)
 
+	# Resolve all of the directories passed into a consistant specification.
 	$ExcludedDirs = New-Object -TypeName System.Collections.Generic.List[string]
 	foreach ($dir in $ExcludeDirs) {
 		if (-not (Test-Path -Path $dir -IsValid)) {
@@ -86,6 +93,7 @@ function Invoke-HashAndSignFiles {
 		}
 	}
 
+	# Resolve all of the directories passed into a consistant specification.
 	$IncludedDirs = New-Object -TypeName System.Collections.Generic.List[string]
 	foreach ($dir in $IncludeDirs) {
 		if (-not (Test-Path -Path $dir -IsValid)) {
@@ -99,6 +107,7 @@ function Invoke-HashAndSignFiles {
 				$temp = Get-Item -Path $dir
 				$string = $temp.Parent.FullName+"\"+$temp.BaseName
 				$IncludedDirs.Add($string)
+				Write-Debug -Message "Including $string in list of directories"
 			}
 		}
 		else {
@@ -108,20 +117,16 @@ function Invoke-HashAndSignFiles {
 
 	$dirs = Get-ChildItem -Directory
 	$hashfiles = [System.Collections.Generic.List[PSCustomObject]]::new()
-	[int]$skipcount = 0
-	[int]$signcount = 0
-	[int]$filecount = 0
-	[int64]$bytecount = 0
-
 	foreach ($dir in $dirs)
 	{
+		# Save the full directory name with the same specification as with the parameters above.
 		$dirstring = $dir.Parent.Fullname+'\'+$dir.BaseName
+
 		if ((($dirstring -in $ExcludedDirs) -and ($PSCmdlet.ParameterSetName -eq 'ExcludeDirs')) -or
 			(($dirstring -notin $IncludedDirs) -and ($PSCmdlet.ParameterSetName -eq 'IncludeDirs')))
 		{
 			Write-Host -NoNewline 'Skipping '
 			Write-Host -ForegroundColor Magenta ($dir.FullName)
-			++$skipcount
 			continue
 		}
 		
@@ -129,12 +134,11 @@ function Invoke-HashAndSignFiles {
 			Write-Host -NoNewline 'Skipping '
 			Write-Host -NoNewline -ForegroundColor Magenta ($dir.BaseName.ToString())
 			Write-Host ' because it''s empty!'
-			++$skipcount
 			continue
 		}
 
 		$path = Push-Location -PassThru -Path $dir.FullName
-		$hashfile = $dir.BaseName.ToString() + ".sha256"
+		$hashfile = 'hashes.txt'
 		$sig = $hashfile + ".sig"
 		if (Test-Path -Path $hashfile) { Remove-Item -Path $hashfile }
 		if (Test-Path -Path $sig) { Remove-Item -Path $sig }
@@ -145,7 +149,7 @@ function Invoke-HashAndSignFiles {
 		Write-Host -ForegroundColor Green ':'
 		Write-Host -Separator $null -ForegroundColor Green (@('-') * ($path.ToString().Length + $hashfile.Length + 2))
 	
-		& rhash --sha256 -rPo $hashfile *
+		& rhash --sha256 --bsd -rPo $hashfile *
 		Write-Host
 		[PSCustomObject]$fileobj = @{
 			'Path' = $path.ToString() + '\'
@@ -163,36 +167,10 @@ function Invoke-HashAndSignFiles {
 			Write-Host -NoNewline -ForegroundColor Green 'Signing: '
 			Write-Host -ForegroundColor Cyan $file['File']
 			& gpg @('--detach-sign', ($file['Path'] + $file['File']))
-			++$signcount
 		}
 	}
 	else {
 		Write-Host
 		Write-Host -ForegroundColor White 'Skipping hash signatures at user request.'
-	}
-
-	if (-not ($NoStats)) {
-		foreach ($file in $hashfiles)
-		{
-			foreach ($line in Get-Content -Path ($file['Path'] + $file['File']))
-			{
-				++$filecount
-				$bytecount += (Get-ChildItem -Force -Path ($file['Path'] + $line.Remove(0,66))).Length
-			}
-		}
-
-		Write-Host
-		Write-Host -NoNewline 'Skipped '
-		Write-Host -NoNewline -ForegroundColor Cyan ("{0:n0}" -f $skipcount)
-		Write-Host ' subdirectories'
-		Write-Host -NoNewline 'Visited '
-		Write-Host -NoNewline -ForegroundColor Cyan ("{0:n0}" -f $hashfiles.Count)
-		Write-Host ' subdirectories'
-		Write-Host -NoNewline 'Hashed '
-		Write-Host -NoNewline -ForegroundColor Cyan ("{0:n0}" -f $filecount)
-		Write-Host ' files'
-		Write-Host -NoNewline 'Hashed '
-		Write-Host -NoNewline -ForegroundColor Cyan ("{0:n0}" -f $bytecount)
-		Write-Host ' bytes'
 	}
 }
