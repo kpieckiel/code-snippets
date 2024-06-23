@@ -14,9 +14,6 @@ function Invoke-HashAndSignFiles {
 	.PARAMETER IncludeDirs
 	Specifies a string array of subdirectory names to include in processing.
 
-#	.PARAMETER Algorithm
-#	Specify a list of one or more algorithms to calculate hashes.
-
 	.PARAMETER NoSign
 	Do not sign the hash files.
 
@@ -41,18 +38,6 @@ function Invoke-HashAndSignFiles {
 	https://gpg4win.org/
 	#>
 
-	[CmdletBinding(DefaultParameterSetName = 'StandardOptions')]
-	Param(
-		[Parameter(ParameterSetName = 'ExcludeDirs', Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string[]]
-		$ExcludeDirs,
-
-		[Parameter(ParameterSetName = 'IncludeDirs', Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string[]]
-		$IncludeDirs,
-
 #		[Parameter(ParameterSetName = 'StandardOptions')]
 #		[Parameter(ParameterSetName = 'ExcludeDirs')]
 #		[Parameter(ParameterSetName = 'IncludeDirs')]
@@ -65,6 +50,18 @@ function Invoke-HashAndSignFiles {
 #		[string[]]
 #		$Algorithm,
 
+	[CmdletBinding(DefaultParameterSetName = 'StandardOptions')]
+	Param(
+		[Parameter(ParameterSetName = 'ExcludeDirs', Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string[]]
+		$ExcludeDirs,
+
+		[Parameter(ParameterSetName = 'IncludeDirs', Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string[]]
+		$IncludeDirs,
+
 		[Parameter(ParameterSetName = 'StandardOptions')]
 		[Parameter(ParameterSetName = 'ExcludeDirs')]
 		[Parameter(ParameterSetName = 'IncludeDirs')]
@@ -72,48 +69,50 @@ function Invoke-HashAndSignFiles {
 		$NoSign
 	)
 
-	# Resolve all of the directories passed into a consistant specification.
-	$ExcludedDirs = New-Object -TypeName System.Collections.Generic.List[string]
-	foreach ($dir in $ExcludeDirs) {
-		if (-not (Test-Path -Path $dir -IsValid)) {
-			Write-Warning -Message "Invalid syntax '$dir'"
-		}
-		elseif (Test-Path -Path $dir) {
-			if (-not (Test-Path -Path $dir -PathType Container)) {
-				Write-Warning -Message "'$dir' is not a directory"
-			}
-			else {
-				$temp = Get-Item -Path $dir
-				$string = $temp.Parent.FullName+"\"+$temp.BaseName
-				$ExcludedDirs.Add($string)
-			}
-		}
-		else {
-			Write-Debug -Message "'$dir' does not exist"
-		}
-	}
+    function New-DirList {
+        [CmdletBinding(DefaultParameterSetName = 'StandardOptions')]
+        Param(
+            [Parameter(Mandatory = $true)]
+            [ValidateNotNullOrEmpty()]
+            [string[]]
+            $Directories
+        )
+
+        $DirList = New-Object -TypeName System.Collections.Generic.List[string]
+        foreach ($dir in $Directories) {
+            if (-not (Test-Path -Path $dir -IsValid)) {
+                Write-Warning -Message "Invalid syntax '$dir'"
+            }
+            elseif (Test-Path -Path $dir) {
+                if (-not (Test-Path -Path $dir -PathType Container)) {
+                    Write-Warning -Message "'$dir' is not a directory"
+                }
+                else {
+                    $temp = Get-Item -Path $dir
+                    if ($temp.Parent.FullName -eq $temp.Parent.Root) {
+                        $Separator = ''
+                    } else {
+                        $Separator = '\'
+                    }
+
+                    $string = $temp.Parent.FullName+$Separator+$temp.BaseName
+                        $DirList.Add($string)
+                }
+            }
+            else {
+                Write-Debug -Message "'$dir' does not exist"
+            }
+        }
+        
+        return $DirList
+    }
 
 	# Resolve all of the directories passed into a consistant specification.
-	$IncludedDirs = New-Object -TypeName System.Collections.Generic.List[string]
-	foreach ($dir in $IncludeDirs) {
-		if (-not (Test-Path -Path $dir -IsValid)) {
-			Write-Warning -Message "Invalid syntax '$dir'"
-		}
-		elseif (Test-Path -Path $dir) {
-			if (-not (Test-Path -Path $dir -PathType Container)) {
-				Write-Warning -Message "'$dir' is not a directory"
-			}
-			else {
-				$temp = Get-Item -Path $dir
-				$string = $temp.Parent.FullName+"\"+$temp.BaseName
-				$IncludedDirs.Add($string)
-				Write-Debug -Message "Including $string in list of directories"
-			}
-		}
-		else {
-			Write-Debug -Message "'$dir' does not exist"
-		}
-	}
+	if ($PSCmdlet.ParameterSetName -eq 'ExcludeDirs') { $ExcludedDirs = New-DirList -Directories $ExcludeDirs }
+    if ($PSCmdlet.ParameterSetName -eq 'IncludeDirs') { $IncludedDirs = New-DirList -Directories $IncludeDirs }
+
+    Write-Debug "ExcludedDirs is $ExcludedDirs"
+    Write-Debug "IncludedDirs is $IncludedDirs"
 
 	$dirs = Get-ChildItem -Directory
 	$hashfiles = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -121,6 +120,7 @@ function Invoke-HashAndSignFiles {
 	{
 		# Save the full directory name with the same specification as with the parameters above.
 		$dirstring = $dir.Parent.Fullname+'\'+$dir.BaseName
+        Write-Debug "dirstring is $dirstring"
 
 		if ((($dirstring -in $ExcludedDirs) -and ($PSCmdlet.ParameterSetName -eq 'ExcludeDirs')) -or
 			(($dirstring -notin $IncludedDirs) -and ($PSCmdlet.ParameterSetName -eq 'IncludeDirs')))
@@ -149,6 +149,7 @@ function Invoke-HashAndSignFiles {
 		Write-Host -ForegroundColor Green ':'
 		Write-Host -Separator $null -ForegroundColor Green (@('-') * ($path.ToString().Length + $hashfile.Length + 2))
 	
+        Write-Debug "rhash goes here"
 		& rhash --sha256 --bsd -rPo $hashfile *
 		Write-Host
 		[PSCustomObject]$fileobj = @{
@@ -166,7 +167,8 @@ function Invoke-HashAndSignFiles {
 		{
 			Write-Host -NoNewline -ForegroundColor Green 'Signing: '
 			Write-Host -ForegroundColor Cyan $file['File']
-			& gpg @('--detach-sign', ($file['Path'] + $file['File']))
+            Write-Debug "gpg goes here"
+			& gpg @('--detach-sign', '--armor', ($file['Path'] + $file['File']))
 		}
 	}
 	else {
